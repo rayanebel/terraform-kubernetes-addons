@@ -92,6 +92,12 @@ locals {
         minAvailable: 1
     VALUES
 
+  services_accounts_emails = {
+    thanos = "serviceAccount:${module.iam_assumable_sa_thanos[0].gcp_service_account_email}",
+    compactor = "serviceAccount:${module.iam_assumable_sa_thanos-compactor[0].gcp_service_account_email}"
+    storegateway = "serviceAccount:${module.iam_assumable_sa_thanos[0].gcp_service_account_email}"
+  }
+
   values_thanos_caching = <<-VALUES
     queryFrontend:
       extraFlags:
@@ -276,28 +282,25 @@ module "thanos_kms_bucket" {
   ]
 }
 
-module "thanos_bucket_iam" {
-  count   = local.thanos["enabled"] ? 1 : 0
-  source  = "terraform-google-modules/iam/google//modules/storage_buckets_iam"
-  version = "~> 7.6"
+resource "google_storage_bucket_iam_member" "thanos_gcs_iam_objectViewer_permissions" {
+  for_each = { for k, v in local.services_accounts_emails : k => v if local.thanos["enabled"] == true }
+  bucket = local.thanos["bucket"]
+  role = "roles/storage.objectViewer"
+  member = each.value
+}
 
-  mode            = "additive"
-  storage_buckets = [local.thanos["bucket"]]
-  bindings = {
-    "roles/storage.objectViewer" = [
-      "serviceAccount:${module.iam_assumable_sa_thanos[0].gcp_service_account_email}",
-      "serviceAccount:${module.iam_assumable_sa_thanos-compactor[0].gcp_service_account_email}",
-      "serviceAccount:${module.iam_assumable_sa_thanos-sg[0].gcp_service_account_email}",
-    ]
-    "roles/storage.objectCreator" = [
-      "serviceAccount:${module.iam_assumable_sa_thanos[0].gcp_service_account_email}",
-      "serviceAccount:${module.iam_assumable_sa_thanos-compactor[0].gcp_service_account_email}",
-      "serviceAccount:${module.iam_assumable_sa_thanos-sg[0].gcp_service_account_email}",
-    ]
-    "roles/storage.legacyBucketWriter" = [
-      "serviceAccount:${module.iam_assumable_sa_thanos-compactor[0].gcp_service_account_email}",
-    ]
-  }
+resource "google_storage_bucket_iam_member" "thanos_gcs_objectCreator_iam_permissions" {
+  for_each = { for k, v in local.services_accounts_emails : k => v if local.thanos["enabled"] == true }
+  bucket = local.thanos["bucket"]
+  role = "roles/storage.objectCreator"
+  member = each.value
+}
+
+resource "google_storage_bucket_iam_member" "thanos_gcs_legacyBucketWriter_iam_permissions" {
+  count = local.thanos["enabled"] ? 1 : 0
+  bucket = local.thanos["bucket"]
+  role = "roles/storage.legacyBucketWriter"
+  member = local.services_accounts_emails["compactor"]
 }
 
 resource "kubernetes_namespace" "thanos" {
